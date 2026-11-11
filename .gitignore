@@ -76,3 +76,6 @@ rsconnect/
 .cm/
 
 # End of https://www.toptal.com/developers/gitignore/api/r,git,standardml
+
+*.exe
+report.pdf

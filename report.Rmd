@@ -6,7 +6,8 @@ output: pdf_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+library(knitr)
+opts_chunk$set(echo = TRUE)
 
 library(cmdstanr)
 library(tidyr)
@@ -21,14 +22,14 @@ games <- games %>%
             separate(timecontrol, into = c("time_avail", "inc"), sep = "\\+", convert = T) %>% 
             mutate(time = time_avail + 40 * inc) %>%
             select(everything(), -time_avail, -inc)
-games$white <- as.factor(games$white)
-games$black <- as.factor(games$black)
+games$white <- factor(games$white, levels = c("A", "B", "C", "D", "E", "SM"), ordered = T)
+games$black <- factor(games$black, levels = c("A", "B", "C", "D", "E", "SM"), ordered = T)
 games$whiteId <- as.integer(games$white)
 games$blackId <- as.integer(games$black)
 
 games <- games %>% select(white, black, whiteId, blackId, everything())
 
-eng <- unique(c(games$white, games$black))
+eng <- sort(unique(c(games$white, games$black)))
 
 N <- nrow(games)
 K <- nlevels(c(games$white, games$black))
@@ -47,7 +48,7 @@ stan_data <- list(
     s = games$result
   )
 
-model <- cmdstan_model("task1.stan")
+model <- cmdstan_model("src/task1.stan")
 
 fit <- model$sample(data = stan_data)
 
@@ -56,10 +57,33 @@ print(fit)
 
 ## 1.3
 
-We say A beats B iff $\mathbb P(E_A > E_B|y) > 0.95$.
+We say A is superior to B iff $\mathbb P(E_A >= E_B|y) > 0.95$.
 
 ```{r}
-R <- fit$R
+R <- fit$draws("R", format = "matrix")
+P <- outer(1:K, 1:K, Vectorize(function(i, j) mean(R[, i] >= R[, j]))) > 0.95
+
+rownames(P) <- colnames(P) <- eng
+
+kable(P)
 ```
 
+# 2 With time control
+
+```{r}
+stan_data <- list(
+    N = N,
+    K = K,
+    t = games$time,
+    w = games$whiteId,
+    b = games$blackId,
+    s = games$result
+  )
+
+model <- cmdstan_model("src/task2.stan")
+
+fit <- model$sample(data = stan_data)
+
+print(fit)
+```
 
