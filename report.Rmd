@@ -1,0 +1,65 @@
+---
+title: "Bays Chess Project"
+author: "Tim Degold, Thomas Durstberger, Caroline Graf, Hennes Hildbrand, Valerie Webb"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(cmdstanr)
+library(tidyr)
+library(dplyr)
+
+set_cmdstan_path("~/Downloads/cmdstan/")
+
+# load games.csv and preprocess
+games <- read.csv("data/games.csv")
+games$result <- ifelse(games$result == "1-0", 2, ifelse(games$result == "0-1", 0, 1))
+games <- games %>% 
+            separate(timecontrol, into = c("time_avail", "inc"), sep = "\\+", convert = T) %>% 
+            mutate(time = time_avail + 40 * inc) %>%
+            select(everything(), -time_avail, -inc)
+games$white <- as.factor(games$white)
+games$black <- as.factor(games$black)
+games$whiteId <- as.integer(games$white)
+games$blackId <- as.integer(games$black)
+
+games <- games %>% select(white, black, whiteId, blackId, everything())
+
+eng <- unique(c(games$white, games$black))
+
+N <- nrow(games)
+K <- nlevels(c(games$white, games$black))
+```
+
+# 1. Tournament Ranking
+
+## 1.2
+
+```{r}
+stan_data <- list(
+    N = N,
+    K = K,
+    w = games$whiteId,
+    b = games$blackId,
+    s = games$result
+  )
+
+model <- cmdstan_model("task1.stan")
+
+fit <- model$sample(data = stan_data)
+
+print(fit)
+```
+
+## 1.3
+
+We say A beats B iff $\mathbb P(E_A > E_B|y) > 0.95$.
+
+```{r}
+R <- fit$R
+```
+
+
