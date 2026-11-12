@@ -11,9 +11,11 @@ parameters {
   vector[K] beta;
 }
 transformed parameters {
-  vector[N] Rw = (alpha[w] .* beta[w]) .* t;
-  vector[N] Rb = (alpha[b] .* beta[b]) .* t;
+  vector[N] Rw = alpha[w] + beta[w] .* t;
+  vector[N] Rb = alpha[b] + beta[b] .* t;
 }
 model {
+  alpha ~ normal(2000, 200);
+  beta ~ normal(0, 1);
   s ~ binomial(2, 1/(1+10^((Rb-Rw)/400)));
 }

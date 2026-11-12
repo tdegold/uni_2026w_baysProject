@@ -6,8 +6,13 @@ output: pdf_document
 ---
 
 ```{r setup, include=FALSE}
+# set seed for reproducibility 
+set.seed(12202394)
+
 library(knitr)
-opts_chunk$set(echo = TRUE)
+library(formatR)
+opts_chunk$set(echo = TRUE, 
+               tidy.opts = list(width.cutoff = 60), tidy = TRUE)
 
 library(cmdstanr)
 library(tidyr)
@@ -17,6 +22,7 @@ set_cmdstan_path("~/Downloads/cmdstan/")
 
 # load games.csv and preprocess
 games <- read.csv("data/games.csv")
+games_raw <- games
 games$result <- ifelse(games$result == "1-0", 2, ifelse(games$result == "0-1", 0, 1))
 games <- games %>% 
             separate(timecontrol, into = c("time_avail", "inc"), sep = "\\+", convert = T) %>% 
@@ -50,7 +56,7 @@ stan_data <- list(
 
 model <- cmdstan_model("src/task1.stan")
 
-fit <- model$sample(data = stan_data)
+fit <- model$sample(data = stan_data, show_messages = F, parallel_chains = 4)
 
 print(fit)
 ```
@@ -61,14 +67,23 @@ We say A is superior to B iff $\mathbb P(E_A >= E_B|y) > 0.95$.
 
 ```{r}
 R <- fit$draws("R", format = "matrix")
-P <- outer(1:K, 1:K, Vectorize(function(i, j) mean(R[, i] >= R[, j]))) > 0.95
+P <- outer(1:K, 1:K, Vectorize(function(i, j) mean(R[, i] > R[, j]))) > 0.95
 
 rownames(P) <- colnames(P) <- eng
 
 kable(P)
+
+df <- as.data.frame(P)
+df$superior_to <- apply(P, 1, function(r) paste(colnames(P)[which(r == TRUE)], collapse = " "))
+df$superior_to <- ifelse(df$superior_to == "", "none", df$superior_to)
+kable(df %>% select(superior_to))
 ```
 
+As we can see E is superior to all other engines. A and SM seem to be equally strong, as well as B and C. Since D is not superior to any other engine, it is the weakest.
+
 # 2 With time control
+
+To include time control we follow the hint and model an engines rating as a linear function $R_i(t)=\alpha_i+\beta_i\cdot t$. Our reasoning was that $R_i$ will not vary across time too much, since generally good engines (as well as players) perform similarly independent of time controls. For this reason we assume $\alpha_i \sim \mathcal N(2000, 200)$ follow the same distribution as the rankings themselves in part 1 and $\beta_i \sim \mathcal N(0,1)$ contributes only little, i.e., has small variance and absolute value. In the very beginning we tried improper priors for both $\alpha$ and $\beta$ as well as bigger standard deviations for $\beta$, but observed poor performance w.r.t. `rhat`, as well as `ess_bulk`, finally settling for the before mentioned distributions. Since the performance was very sensitive to the prior of $\beta$, it proved useful to increase `iter_warmup` to 2000. 
 
 ```{r}
 stan_data <- list(
@@ -79,11 +94,75 @@ stan_data <- list(
     b = games$blackId,
     s = games$result
   )
-
 model <- cmdstan_model("src/task2.stan")
 
-fit <- model$sample(data = stan_data)
+fit <- model$sample(data = stan_data, iter_warmup = 2000,
+                    parallel_chains = 4, show_messages = F)
 
-print(fit)
+
+
+print(fit, max_rows = 13)
+```
+
+```{r}
+time <- 0:999
+
+a <- as.matrix(as.data.frame(fit$draws("alpha", format = "matrix"))) # draws x 6
+b <- as.matrix(as.data.frame(fit$draws("beta",  format = "matrix")))
+
+draws <- nrow(a)
+
+R <- lower <- upper <- matrix(NA_real_, ncol = length(time), nrow = K)
+
+for(i in 1:K){
+  lines_i <- a[, i] + outer(b[, i], time)    # draws x 1000
+  q <- apply(lines_i, 2, sd)
+  R[i, ] <- apply(lines_i, 2, mean)
+  lower[i, ] <- R[i, ] - q
+  upper[i, ] <- R[i, ] + q
+}
+
+cols <- hcl.colors(nrow(R), "Dark 3")
+
+matplot(time, t(R), type = "n", xlab = "time", ylab = "R",
+        ylim = range(lower, upper),
+        main = expression("Ratings " * R[i](t) %+-% sd[i](t)))
+
+for (i in seq_len(nrow(R))) {
+  polygon(c(time, rev(time)), c(lower[i, ], rev(upper[i, ])),
+          col = adjustcolor(cols[i], alpha.f = 0.2), border = NA)
+}
+
+matlines(time, t(R), lty = 1, lwd = 4, col = cols)
+legend("topleft", legend = eng, col = cols, lty = 1, lwd = 4,
+       bty = "n", ncol = 2)
+```
+
+```{r, results='asis'}
+time <- c(15, 60, 180+2*40, 600)
+labels <- c("15+0", "60+0", "180+2", "600+0")
+
+R_t <- array(NA_real_, dim = c(length(time), draws, K))
+
+for(i in 1:K){
+  R_t[, , i] <- t(a[, i] + outer(b[, i], time))    # 4 x draws
+}
+
+table <- matrix(NA_character_, ncol = length(time), nrow = K)
+ 
+for(t in seq_along(time)){
+  P <- outer(1:K, 1:K, Vectorize(function(i, j) mean(R_t[t, , i] > R_t[t, , j]))) > 0.95
+
+  rownames(P) <- colnames(P) <- eng
+
+  df <- as.data.frame(P)
+  df$superior_to <- apply(P, 1, function(r) paste(colnames(P)[which(r == TRUE)], collapse = " "))
+  df$superior_to <- ifelse(df$superior_to == "", "none", df$superior_to)
+  table[, t] <- as.matrix(df %>% select(superior_to))
+}
+
+rownames(table) <- eng
+colnames(table) <- labels
+kable(table, caption = "Superiority across time control")
 ```
 
